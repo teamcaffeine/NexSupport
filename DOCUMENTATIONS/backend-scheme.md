@@ -1,639 +1,642 @@
-# Backend Scheme
-## Smart Customer Support System
+## Pending — AI-Native Customer Support System (0 → MONSTER)
 
 ---
 
-## 1. Entry Point — `server/index.js`
+# 🧠 1. What You Are Actually Building
+
+You are NOT building:
+
+❌ Chat app
+❌ Ticket system
+
+You ARE building:
+
+> ✅ **AI-powered, event-driven, multi-tenant support infrastructure**
+
+---
+
+# 🎯 2. Core System Goals
+
+* Handle **millions of messages**
+* Reduce human workload via AI
+* Provide **real-time experience**
+* Enable **enterprise-grade multi-tenancy**
+* Be **extensible + scalable**
+
+---
+
+# 🏗️ 3. High-Level Architecture
 
 ```
-1. Load env vars (dotenv)
-2. Create Express app
-3. Apply global middleware: cors, express.json
-4. Mount REST routers
-5. Create HTTP server from Express app
-6. Attach Socket.io to HTTP server
-7. Connect Prisma (DB)
-8. Connect Redis
-9. Listen on PORT
-```
-
-```js
-const app        = express()
-const httpServer = createServer(app)
-const io         = new Server(httpServer, { cors })
-
-app.use('/api/auth',    authRouter)
-app.use('/api/messages', messagesRouter)
-app.use('/api/tickets',  ticketsRouter)
-app.use('/api/admin',    adminRouter)
-
-initSocket(io)          // socket/index.js
-httpServer.listen(PORT)
+Client Apps (Web / Mobile / Widget)
+        ↓
+API Gateway (Express)
+        ↓
+-----------------------------------
+|  Core Backend Services          |
+|--------------------------------|
+| Auth Service                   |
+| Ticket Service                 |
+| Message Service                |
+| AI Service                     |
+| Agent Service                  |
+| Analytics Service              |
+-----------------------------------
+        ↓
+Data Layer (MongoDB + Redis)
+        ↓
+Async Layer (Queue Workers)
 ```
 
 ---
 
-## 2. Folder Structure
+# ⚙️ 4. Backend Architecture Style
+
+### Hybrid Approach:
+
+* **Modular Monolith (initial)**
+* Designed to evolve into **Microservices**
+
+---
+
+# 📁 5. Final Folder Structure (Production)
 
 ```
 server/
-├── index.js                  # Entry point
-├── prisma/
-│   ├── schema.prisma         # DB models
-│   └── migrations/           # Auto-generated migration files
-├── routes/
-│   ├── auth.js               # POST /register, POST /login
-│   ├── messages.js           # POST /messages, GET /messages/:ticketId
-│   ├── tickets.js            # GET/PATCH /tickets
-│   └── admin.js              # Admin-only routes
-├── middleware/
-│   ├── verifyJWT.js          # Decode + verify token
-│   ├── extractTenant.js      # Attach tenantId to req
-│   └── checkRole.js          # Role-based guard factory
-├── services/
-│   ├── aiEngine.js           # Claude API call + Redis cache
-│   ├── decisionEngine.js     # Routing logic (escalate vs reply)
-│   └── agentAssigner.js      # Find + assign least-busy agent
-├── socket/
-│   └── index.js              # All Socket.io event handlers
-├── lib/
-│   ├── prisma.js             # Prisma client singleton
-│   └── redis.js              # ioredis client singleton
-└── utils/
-    └── hash.js               # SHA256 helper for cache keys
+├── src/
+│   ├── config/              # env, constants
+│   ├── modules/
+│   │   ├── auth/
+│   │   ├── users/
+│   │   ├── tickets/
+│   │   ├── messages/
+│   │   ├── ai/
+│   │   ├── agents/
+│   │   └── analytics/
+│   ├── middleware/
+│   ├── socket/
+│   ├── queues/              # BullMQ workers
+│   ├── events/              # event emitters
+│   ├── lib/
+│   │   ├── db.js
+│   │   ├── redis.js
+│   │   └── logger.js
+│   ├── utils/
+│   └── app.js
+├── index.js
 ```
 
 ---
 
-## 3. Middleware
+# 🗄️ 6. DATABASE DESIGN (FINAL - MONGODB)
 
-### `middleware/verifyJWT.js`
-```
-Request arrives with Authorization: Bearer <token>
-  → jwt.verify(token, JWT_SECRET)
-  → On success: attach decoded payload to req.user
-  → On failure: 401 Unauthorized
-```
+---
+
+## 🔥 ADDITIONAL (Missing Earlier — Now Fixed)
+
+We now include:
+
+* Audit logs
+* Sessions
+* Notifications
+* Agent stats
+* System configs
+
+---
+
+## 🏢 Tenant
 
 ```js
-export function verifyJWT(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1]
-  if (!token) return res.status(401).json({ error: 'No token' })
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET)
-    next()
-  } catch {
-    res.status(401).json({ error: 'Invalid token' })
-  }
-}
-```
-
-### `middleware/extractTenant.js`
-```
-Reads tenantId from req.user (set by verifyJWT)
-  → Attaches req.tenantId for use in every handler
-  → Guarantees all DB queries are scoped
-```
-
-```js
-export function extractTenant(req, res, next) {
-  req.tenantId = req.user.tenantId
-  next()
-}
-```
-
-### `middleware/checkRole.js`
-```
-Factory function — returns middleware that checks role
-  → Called as: checkRole('admin') or checkRole('agent', 'admin')
-  → 403 Forbidden if role not in allowed list
-```
-
-```js
-export function checkRole(...roles) {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role))
-      return res.status(403).json({ error: 'Forbidden' })
-    next()
-  }
-}
-```
-
-### Middleware Chain (applied per route group)
-```
-Public routes:     (no middleware)
-Customer routes:   verifyJWT → extractTenant
-Agent routes:      verifyJWT → extractTenant → checkRole('agent', 'admin')
-Admin routes:      verifyJWT → extractTenant → checkRole('admin')
-```
-
----
-
-## 4. Routes
-
-### `routes/auth.js`
-
-#### `POST /api/auth/register`
-```
-Body:    { name, email, password, tenantId }
-Action:  Hash password (bcrypt), INSERT user
-Returns: { token, user: { id, name, role, tenantId } }
-Errors:  409 if email already exists
-```
-
-#### `POST /api/auth/login`
-```
-Body:    { email, password }
-Action:  Find user by email, bcrypt.compare(password, hash)
-Returns: { token, user: { id, name, role, tenantId } }
-Errors:  401 if email not found or password mismatch
-```
-
----
-
-### `routes/messages.js`
-
-#### `POST /api/messages`
-```
-Auth:    verifyJWT → extractTenant
-Body:    { content, ticketId? }
-Action:
-  1. Call aiEngine.analyze(content, tenantId)
-  2. Call decisionEngine.process(aiResult, userId, tenantId)
-     → If no escalation: returns { reply, isAI: true }
-     → If escalation: creates ticket, assigns agent, returns { ticketId }
-  3. Save message to DB (linked to ticketId)
-Returns: { messageId, aiReply?, ticketId? }
-```
-
-#### `GET /api/messages/:ticketId`
-```
-Auth:    verifyJWT → extractTenant
-Action:  SELECT messages WHERE ticket_id = :ticketId AND tenant_id = :tenantId
-         ORDER BY created_at ASC
-Returns: [ { id, content, senderId, isAI, createdAt, senderName } ]
-Guards:  Customer can only fetch tickets they own
-         Agent can fetch any assigned ticket (within tenantId)
-```
-
----
-
-### `routes/tickets.js`
-
-#### `GET /api/tickets`
-```
-Auth:    verifyJWT → extractTenant
-Query:   ?status=open&priority=high&page=1&limit=20
-Action:  Role-scoped query:
-           customer → WHERE user_id = me
-           agent    → WHERE assigned_agent_id = me
-           admin    → all tickets for tenantId
-Returns: [ { id, status, priority, intent, emotion, assignedAgent, createdAt } ]
-```
-
-#### `GET /api/tickets/:id`
-```
-Auth:    verifyJWT → extractTenant
-Action:  SELECT ticket + verify tenantId matches
-Returns: { id, status, priority, intent, emotion, summary,
-           userId, assignedAgentId, createdAt, updatedAt }
-```
-
-#### `PATCH /api/tickets/:id/status`
-```
-Auth:    verifyJWT → extractTenant → checkRole('agent', 'admin')
-Body:    { status: 'in_progress' | 'closed' }
-Action:  UPDATE tickets SET status, updated_at WHERE id AND tenant_id
-Returns: { id, status, updatedAt }
-Side:    If closed, emit ticket:closed to customer socket room
-```
-
-#### `PATCH /api/tickets/:id/assign`
-```
-Auth:    verifyJWT → extractTenant → checkRole('admin')
-Body:    { agentId }
-Action:  UPDATE tickets SET assigned_agent_id WHERE id AND tenant_id
-         Verify agentId belongs to same tenantId
-Returns: { id, assignedAgentId }
-Side:    Emit ticket:assigned to new agent socket
-```
-
----
-
-### `routes/admin.js`
-
-#### `GET /api/admin/users`
-```
-Auth:    verifyJWT → extractTenant → checkRole('admin')
-Action:  SELECT users WHERE tenant_id = :tenantId
-Returns: [ { id, name, email, role, createdAt } ]
-```
-
-#### `PATCH /api/admin/users/:id/role`
-```
-Auth:    verifyJWT → extractTenant → checkRole('admin')
-Body:    { role: 'customer' | 'agent' | 'admin' }
-Action:  UPDATE users SET role WHERE id AND tenant_id
-Returns: { id, role }
-```
-
-#### `GET /api/admin/analytics`
-```
-Auth:    verifyJWT → extractTenant → checkRole('admin')
-Action:  Check Redis stats:{tenantId} → return cached if fresh
-         Else compute:
-           total tickets, open count, closed count,
-           AI-resolved count (tickets with no assignedAgentId),
-           avg resolution time (closed_at - created_at)
-         Store in Redis (TTL: 10 min)
-Returns: { total, open, closed, aiResolved, aiResolutionRate, avgResolutionTime }
-```
-
-#### `POST /api/admin/tenants`
-```
-Auth:    verifyJWT (super-admin only, or open during seeding)
-Body:    { name }
-Action:  INSERT tenant
-Returns: { id, name, createdAt }
-```
-
----
-
-## 5. Services
-
-### `services/aiEngine.js`
-
-```
-export async function analyze(message, tenantId):
-
-1. Compute cacheKey = `ai_cache:${tenantId}:${sha256(message)}`
-2. Check Redis: GET cacheKey
-   → HIT:  parse JSON, return immediately
-   → MISS: proceed
-
-3. Call Anthropic SDK:
-   anthropic.messages.create({
-     model: 'claude-sonnet-4-6',
-     max_tokens: 256,
-     system: SYSTEM_PROMPT,
-     messages: [{ role: 'user', content: message }]
-   })
-
-4. Extract text from response
-5. JSON.parse(text)
-   → On failure: return { shouldEscalate: true, suggestedReply: DEFAULT_MSG,
-                           intent: 'unknown', emotion: 'unknown', confidence: 0 }
-
-6. Redis SET cacheKey JSON(result) EX 3600
-7. Return result
-```
-
-**System Prompt (constant):**
-```
-You are a customer support AI. Analyze the customer message.
-Return ONLY a JSON object with these fields:
-- intent (string): category of the problem
-- emotion (string): angry | frustrated | neutral | happy
-- confidence (number): 0.0 to 1.0
-- shouldEscalate (boolean): whether a human agent is needed
-- suggestedReply (string): a short draft reply to the customer
-No explanation. No markdown. JSON only.
-```
-
----
-
-### `services/decisionEngine.js`
-
-```
-export async function process(aiResult, userId, tenantId, io):
-
-const { emotion, confidence, shouldEscalate, suggestedReply, intent } = aiResult
-
-// Override shouldEscalate based on emotion/confidence
-let escalate = shouldEscalate
-let priority  = 'low'
-
-if (emotion === 'angry') {
-  escalate = true
-  priority  = 'high'
-} else if (emotion === 'frustrated' || confidence < 0.5) {
-  escalate = true
-  priority  = 'medium'
-}
-
-if (!escalate) {
-  return { escalated: false, reply: suggestedReply }
-}
-
-// Escalation path
-const ticket = await prisma.ticket.create({
-  data: { userId, tenantId, status: 'open', priority, intent, emotion,
-          summary: suggestedReply }
-})
-
-const agentId = await agentAssigner.assign(tenantId)
-
-if (agentId) {
-  await prisma.ticket.update({
-    where: { id: ticket.id },
-    data:  { assignedAgentId: agentId }
-  })
-  io.to(`room:${tenantId}:agent:${agentId}`)
-    .emit('ticket:assigned', { ticketId: ticket.id, userId, emotion, intent })
-}
-
-return { escalated: true, ticketId: ticket.id, reply: suggestedReply }
-```
-
----
-
-### `services/agentAssigner.js`
-
-```
-export async function assign(tenantId):
-
-1. GET Redis: agents:available:{tenantId}
-   → Returns list of { agentId, activeTickets } sorted by activeTickets ASC
-
-2. If list is empty:
-   → Fallback: query DB for agents with role='agent' and tenant_id=tenantId
-   → Pick agent with fewest open tickets (COUNT query)
-
-3. Return agentId of least-busy agent (or null if no agents online)
-```
-
----
-
-## 6. Socket.io — `socket/index.js`
-
-### Connection Setup
-```js
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token
-  try {
-    socket.user = jwt.verify(token, process.env.JWT_SECRET)
-    next()
-  } catch {
-    next(new Error('Unauthorized'))
-  }
-})
-
-io.on('connection', (socket) => {
-  const { userId, role, tenantId } = socket.user
-
-  // Register session in Redis
-  redis.set(`session:${userId}`, socket.id)
-
-  // Join personal room
-  socket.join(`room:${tenantId}:${userId}`)
-
-  // If agent: join agent room + update available list
-  if (role === 'agent') {
-    socket.join(`room:${tenantId}:agent:${userId}`)
-    updateAgentAvailability(tenantId, userId, 'add')
-  }
-
-  socket.on('user:message',   handleUserMessage(socket, io))
-  socket.on('agent:message',  handleAgentMessage(socket, io))
-  socket.on('disconnect',     handleDisconnect(socket))
-})
-```
-
-### Event: `user:message`
-```
-Payload: { message, tenantId }
-
-Handler:
-  1. aiEngine.analyze(message, tenantId)
-  2. decisionEngine.process(aiResult, userId, tenantId, io)
-  3. Save message to DB
-  4a. If not escalated:
-        socket.emit('ai:reply', { reply, isAI: true })
-  4b. If escalated:
-        socket.emit('ticket:created', { ticketId, message: reply })
-        (agent notification is emitted inside decisionEngine)
-```
-
-### Event: `agent:message`
-```
-Payload: { ticketId, message }
-
-Handler:
-  1. Verify ticket.assignedAgentId === agentId AND ticket.tenantId === tenantId
-  2. Save message to DB (is_ai: false, sender_id: agentId)
-  3. Get customerId from ticket.userId
-  4. io.to(`room:${tenantId}:${customerId}`)
-       .emit('agent:message', { reply: message, agentName: socket.user.name })
-```
-
-### Event: `disconnect`
-```
-Handler:
-  1. redis.del(`session:${userId}`)
-  2. If role === 'agent':
-       updateAgentAvailability(tenantId, userId, 'remove')
-```
-
-### Helper: `updateAgentAvailability`
-```
-add:    SADD  agents:available:{tenantId}  agentId  (EXPIRE 5min)
-remove: SREM  agents:available:{tenantId}  agentId
-```
-
----
-
-## 7. Prisma Schema — `prisma/schema.prisma`
-
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
-  users     User[]
-  tickets   Ticket[]
-  messages  Message[]
-}
-
-model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  password  String
-  role      Role     @default(customer)
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  createdAt DateTime @default(now())
-
-  sentMessages      Message[] @relation("SentMessages")
-  ownedTickets      Ticket[]  @relation("TicketOwner")
-  assignedTickets   Ticket[]  @relation("AssignedAgent")
-}
-
-model Ticket {
-  id              String       @id @default(uuid())
-  userId          String
-  assignedAgentId String?
-  tenantId        String
-  status          TicketStatus @default(open)
-  priority        Priority     @default(low)
-  intent          String?
-  emotion         String?
-  summary         String?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-
-  user          User      @relation("TicketOwner",   fields: [userId],          references: [id])
-  assignedAgent User?     @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
-  tenant        Tenant    @relation(fields: [tenantId], references: [id])
-  messages      Message[]
-}
-
-model Message {
-  id        String   @id @default(uuid())
-  ticketId  String
-  senderId  String
-  tenantId  String
-  content   String
-  isAI      Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  ticket   Ticket @relation(fields: [ticketId],  references: [id])
-  sender   User   @relation("SentMessages", fields: [senderId], references: [id])
-  tenant   Tenant @relation(fields: [tenantId],  references: [id])
-}
-
-enum Role {
-  customer
-  agent
-  admin
-}
-
-enum TicketStatus {
-  open
-  in_progress
-  closed
-}
-
-enum Priority {
-  low
-  medium
-  high
-}
-```
-
----
-
-## 8. Redis Client — `lib/redis.js`
-
-```js
-import Redis from 'ioredis'
-
-const redis = new Redis(process.env.REDIS_URL)
-
-redis.on('error', (err) => console.error('Redis error:', err))
-
-export default redis
-```
-
----
-
-## 9. Prisma Client — `lib/prisma.js`
-
-```js
-import { PrismaClient } from '@prisma/client'
-
-const prisma = globalThis.prisma ?? new PrismaClient()
-if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma
-
-export default prisma
-```
-
----
-
-## 10. Error Handling
-
-### REST API
-```
-All route handlers wrapped in try/catch
-→ 400 Bad Request   — missing or invalid body fields
-→ 401 Unauthorized  — invalid/missing JWT
-→ 403 Forbidden     — role not permitted
-→ 404 Not Found     — record doesn't exist or wrong tenantId
-→ 409 Conflict      — unique constraint violation (e.g. email)
-→ 500 Internal      — unhandled server error (log + generic message)
-```
-
-### AI Engine Failures
-```
-Claude API timeout / rate limit → catch error → return shouldEscalate: true
-JSON parse failure              → return shouldEscalate: true (safe default)
-Redis unavailable               → skip cache, call Claude directly (degraded mode)
-```
-
-### Socket.io
-```
-Auth failure on connect → emit 'error' event → client disconnects
-Handler errors          → caught, logged, no crash to server process
-```
-
----
-
-## 11. Request / Response Examples
-
-### POST `/api/auth/login`
-```json
-// Request
-{ "email": "agent@shopeasy.com", "password": "secret123" }
-
-// Response 200
 {
-  "token": "eyJhbGci...",
-  "user": { "id": "uuid", "name": "Alice", "role": "agent", "tenantId": "uuid" }
+  _id,
+  name,
+  plan,
+  settings: {
+    aiEnabled: true,
+    escalationThreshold: 0.5
+  },
+  createdAt
 }
 ```
 
-### POST `/api/messages`
-```json
-// Request
-{ "content": "Where is my order?", "ticketId": null }
+---
 
-// Response 200 — AI handles it
-{ "messageId": "uuid", "aiReply": "Your order is out for delivery.", "ticketId": null }
+## 👤 User
 
-// Response 200 — Escalated
-{ "messageId": "uuid", "aiReply": "Connecting you to an agent...", "ticketId": "uuid" }
+```js
+{
+  _id,
+  name,
+  email,
+  password,
+  role,
+  tenantId,
+
+  status: "active" | "blocked",
+  lastSeen: Date,
+
+  createdAt
+}
 ```
 
-### GET `/api/admin/analytics`
+---
+
+## 🎫 Ticket
+
+```js
+{
+  _id,
+  tenantId,
+  customerId,
+  assignedAgentId,
+
+  status,
+  priority,
+
+  intent,
+  emotion,
+
+  tags: [],
+
+  lastMessageAt,
+  createdAt,
+  updatedAt
+}
+```
+
+---
+
+## 💬 Message
+
+```js
+{
+  _id,
+  ticketId,
+  tenantId,
+
+  senderId,
+  senderType,
+
+  content,
+  attachments: [],
+
+  isAI,
+  createdAt
+}
+```
+
+---
+
+## 🤖 AI Logs
+
+```js
+{
+  _id,
+  messageId,
+  tenantId,
+
+  input,
+  output,
+  latency,
+  tokensUsed,
+
+  createdAt
+}
+```
+
+---
+
+## 📊 Agent Stats
+
+```js
+{
+  agentId,
+  tenantId,
+  activeTickets,
+  resolvedTickets,
+  avgResponseTime
+}
+```
+
+---
+
+## 🔔 Notifications
+
+```js
+{
+  userId,
+  type,
+  data,
+  read: false,
+  createdAt
+}
+```
+
+---
+
+## 📜 Audit Logs
+
+```js
+{
+  userId,
+  action,
+  entity,
+  entityId,
+  createdAt
+}
+```
+
+---
+
+## 🔐 Sessions (Optional Redis/DB Hybrid)
+
+```js
+{
+  userId,
+  socketId,
+  lastSeen
+}
+```
+
+---
+
+# 🔥 7. INDEXING STRATEGY (CRITICAL)
+
+```js
+tickets: { tenantId, status, assignedAgentId }
+messages: { ticketId, createdAt }
+users: { tenantId, email }
+aiLogs: { tenantId, createdAt }
+```
+
+---
+
+# 🔐 8. AUTH SYSTEM (PROPER)
+
+---
+
+## JWT + Refresh Tokens
+
+Flow:
+
+```
+Login → Access Token (short) + Refresh Token (long)
+```
+
+---
+
+## Security Additions:
+
+* Password hashing (bcrypt)
+* Token rotation
+* Device tracking (optional)
+
+---
+
+# ⚡ 9. REAL-TIME SYSTEM (ADVANCED)
+
+---
+
+## Socket Lifecycle
+
+* Authenticate via JWT
+* Join rooms
+* Register presence
+* Track activity
+
+---
+
+## Presence System
+
+```js
+onlineUsers:{tenantId} → Redis Set
+```
+
+---
+
+## Typing Indicator
+
+```js
+typing:{ticketId}
+```
+
+---
+
+# 🤖 10. AI SYSTEM (ADVANCED)
+
+---
+
+## Layers
+
+1. Prompt Builder
+2. Context Manager
+3. AI Call
+4. Response Parser
+5. Cache Layer
+
+---
+
+## Context Includes:
+
+* Last messages
+* User history
+* Ticket history
+
+---
+
+## Safety Layer
+
+If AI fails:
+
+```js
+return { shouldEscalate: true }
+```
+
+---
+
+# 🧠 11. DECISION ENGINE (ADVANCED)
+
+---
+
+## Inputs:
+
+* emotion
+* confidence
+* intent
+* tenant rules
+
+---
+
+## Output:
+
+```js
+{
+  action: "reply" | "escalate",
+  priority,
+  ticketId
+}
+```
+
+---
+
+# 👨‍💻 12. AGENT SYSTEM (ADVANCED)
+
+---
+
+## Features:
+
+* Load balancing
+* Skill-based routing (future)
+* Auto reassignment
+* SLA monitoring
+
+---
+
+# ⚡ 13. QUEUE SYSTEM (IMPORTANT)
+
+---
+
+## Why:
+
+* AI calls are slow
+* Need retries
+* Avoid blocking
+
+---
+
+## Flow:
+
+```
+Message → Queue → Worker → AI → Decision
+```
+
+---
+
+## Jobs:
+
+* AI processing
+* Email notifications
+* Analytics aggregation
+
+---
+
+# 🌐 14. API DESIGN (PROPER)
+
+---
+
+## Versioning
+
+```
+/api/v1/
+```
+
+---
+
+## Response Format
+
 ```json
 {
-  "total": 142,
-  "open": 18,
-  "closed": 124,
-  "aiResolved": 91,
-  "aiResolutionRate": 0.64,
-  "avgResolutionTime": "4m 32s"
+  "success": true,
+  "data": {},
+  "error": null
 }
 ```
 
 ---
 
-## 12. Environment Variables
+## Error Format
 
-```env
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
-REDIS_URL=redis://default:pass@host:6379
-JWT_SECRET=your_jwt_secret_here
-ANTHROPIC_API_KEY=sk-ant-...
-PORT=3000
-NODE_ENV=development
+```json
+{
+  "success": false,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid token"
+  }
+}
 ```
+
+---
+
+# 📡 15. EVENT-DRIVEN ARCHITECTURE
+
+---
+
+## Internal Events:
+
+* message.created
+* ticket.created
+* ticket.assigned
+* agent.online
+
+---
+
+Used for:
+
+* decoupling services
+* triggering async jobs
+
+---
+
+# 📊 16. ANALYTICS SYSTEM (ADVANCED)
+
+---
+
+## Metrics:
+
+* Resolution time
+* First response time
+* AI success rate
+* Agent performance
+
+---
+
+## Storage:
+
+* Redis (fast)
+* MongoDB (long-term)
+
+---
+
+# 🔐 17. SECURITY (FULL)
+
+---
+
+* Rate limiting (per tenant)
+* Input validation (Zod)
+* Helmet (headers)
+* CORS config
+* Audit logs
+
+---
+
+# ⚡ 18. PERFORMANCE OPTIMIZATION
+
+---
+
+## Backend
+
+* Caching
+* Batching queries
+* Async jobs
+
+---
+
+## DB
+
+* Indexes
+* Pagination
+* Avoid joins
+
+---
+
+# 📈 19. SCALABILITY (REAL)
+
+---
+
+## Horizontal Scaling
+
+* Stateless backend
+* Load balancer
+
+---
+
+## Socket Scaling
+
+* Redis adapter
+
+---
+
+## DB Scaling
+
+* MongoDB sharding
+
+---
+
+# 🚀 20. DEPLOYMENT
+
+---
+
+## Stack:
+
+* Backend → Docker + AWS / Railway
+* Frontend → Vercel
+* DB → Mongo Atlas
+* Redis → Upstash
+
+---
+
+## CI/CD
+
+* GitHub Actions
+* Auto deploy
+
+---
+
+# 🧨 21. MONSTER FEATURES
+
+---
+
+### 🔥 Predictive AI Escalation
+
+Escalates before user frustration spikes
+
+---
+
+### 🔥 AI Memory
+
+Remembers past conversations
+
+---
+
+### 🔥 Agent Assist
+
+Suggests replies to agents
+
+---
+
+### 🔥 Auto Learning
+
+Improves from resolved tickets
+
+---
+
+# 📏 22. SUCCESS METRICS
+
+---
+
+* AI resolves > 60% tickets
+* Response time < 2s
+* CSAT > 90%
+* 99.9% uptime
+
+---
+
+# 🧠 FINAL TRUTH
+
+Most developers fail because they:
+
+* Build features ❌
+* Ignore systems ❌
+
+You are now building:
+
+> ✅ **A scalable, intelligent system**
+
+---
+
+# 🚀 FINAL CONCLUSION
+
+You now have:
+
+✔ Full backend architecture
+✔ MongoDB schema (complete)
+✔ AI + decision system
+✔ Real-time system
+✔ Queue system
+✔ Security + scaling
+
+---
+
+> This is a **real startup-level backend blueprint**
+
