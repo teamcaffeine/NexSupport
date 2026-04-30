@@ -1,6 +1,10 @@
-# React + TypeScript + Vite
+# NexSupport — AI-Native Customer Support Operating System
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+NexSupport is a multi-tenant, AI-powered customer support platform that automatically routes customer queries to AI or human agents based on emotion and confidence analysis, with real-time Socket.io communication and a full ticket workflow.
+
+## Frontend
+
+Built with React + TypeScript + Vite with HMR and ESLint rules.
 
 Currently, two official plugins are available:
 
