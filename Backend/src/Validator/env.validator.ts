@@ -1,3 +1,7 @@
+import { config } from 'dotenv';
+
+config();
+
 import { z } from 'zod';
 
 /**
@@ -12,11 +16,11 @@ const envSchema = z.object({
       message: 'PORT must be a number',
     }),
 
-  MONGODB_URL: z.string().min(1, 'MONGODB_URL is required').url('MONGODB_URL must be a valid URL'),
+  MONGODB_URL: z.string().min(1, 'MONGODB_URL is required'),
 
   JWT_SECRET: z.string().min(6, 'JWT_SECRET must be at least 6 characters'),
 
-  REDIS_URL: z.string().url('REDIS_URL must be a valid URL').optional(),
+  REDIS_URL: z.string().optional(),
 
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
@@ -24,6 +28,7 @@ const envSchema = z.object({
 /**
  * Validate env
  */
+
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {

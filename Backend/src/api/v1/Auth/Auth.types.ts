@@ -50,7 +50,6 @@ export type CreateUserInput = {
   name: string;
   email: string;
   password: string;
-  tenantId: Types.ObjectId | string;
   mobileNumber: string;
-  role?: UserRole;
+  role: UserRole | undefined;
 };

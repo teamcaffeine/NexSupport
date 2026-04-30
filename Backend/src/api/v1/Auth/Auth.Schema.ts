@@ -1,21 +1,8 @@
-// src/modules/auth/user.model.ts
-
-import { Schema, model, Types, Document } from 'mongoose';
+import { Schema, model } from 'mongoose';
 import { IUser, UserRole, UserStatus } from './Auth.types';
-
-/* =========================
-   3. Schema
-========================= */
 
 const UserSchema = new Schema<IUser>(
   {
-    tenantId: {
-      type: Types.ObjectId,
-      ref: 'Tenant',
-      required: true,
-      index: true,
-    },
-
     name: {
       type: String,
       required: true,
@@ -44,7 +31,7 @@ const UserSchema = new Schema<IUser>(
     role: {
       type: String,
       enum: Object.values(UserRole),
-       required: true,
+      required: true,
       default: UserRole.CUSTOMER,
     },
 
@@ -81,11 +68,6 @@ const UserSchema = new Schema<IUser>(
   { timestamps: true },
 );
 
-/* =========================
-   4. Indexes (CRITICAL)
-========================= */
-
-// Unique per tenant
 UserSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 
 // Optional performance indexes

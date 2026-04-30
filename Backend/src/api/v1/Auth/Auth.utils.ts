@@ -25,10 +25,9 @@ export class AuthUtils {
   ========================= */
 
   // Find by email + tenant (IMPORTANT for multi-tenant)
-  static async findUserByEmail(email: string, tenantId: string) {
+  static async findUserByEmail(email: string) {
     return await UserModel.findOne({
       email: email.toLowerCase(),
-      tenantId,
     }).select('+password');
   }
 
@@ -36,17 +35,15 @@ export class AuthUtils {
     return await UserModel.findById(userId);
   }
 
-  static async findUserByIdAndTenant(userId: string, tenantId: string) {
+  static async findUserByIdAndTenant(userId: string) {
     return await UserModel.findOne({
       _id: userId,
-      tenantId,
     });
   }
 
-  static async findActiveUserByEmail(email: string, tenantId: string) {
+  static async findActiveUserByEmail(email: string) {
     return await UserModel.findOne({
       email: email.toLowerCase(),
-      tenantId,
       status: UserStatus.ACTIVE,
     }).select('+password');
   }
@@ -55,13 +52,13 @@ export class AuthUtils {
      JWT UTILITIES
   ========================= */
 
-  static generateAccessToken(payload: { userId: string; tenantId: string; role: string }) {
+  static generateAccessToken(payload: { userId: string; role: string | undefined }) {
     return jwt.sign(payload, env.JWT_SECRET, {
       expiresIn: '15m',
     });
   }
 
-  static generateRefreshToken(payload: { userId: string; tenantId: string }) {
+  static generateRefreshToken(payload: { userId: string }) {
     return jwt.sign(payload, env.JWT_SECRET, {
       expiresIn: '7d',
     });
