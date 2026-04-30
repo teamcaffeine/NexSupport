@@ -1,4 +1,4 @@
-## Pending — AI-Native Customer Support System (0 → MONSTER)
+## NexSupport — AI-Native Customer Support System (0 → MONSTER)
 
 ---
 

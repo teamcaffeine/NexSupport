@@ -1,12 +1,12 @@
 
 
-## Pending — AI-Native Customer Support System (0 → MONSTER)
+## NexSupport — AI-Native Customer Support System (0 → MONSTER)
 
 ---
 
 # 🧠 1. Executive Vision
 
-Pending is not a feature.
+NexSupport is not a feature.
 It is:
 
 > **A fully integrated AI + Human hybrid customer support infrastructure**
@@ -16,7 +16,7 @@ It solves the core industry gap:
 * AI alone → frustrating ❌
 * Humans alone → expensive ❌
 
-👉 **Pending = Intelligent routing layer between AI and Humans**
+👉 **NexSupport = Intelligent routing layer between AI and Humans**
 
 ---
 
